@@ -1,2 +1,5 @@
 # desktop_and_mobilephone_imformation
+
 用于多个手机和电脑在同一局域网下的通信
+
+在作为服务器的电脑上运行dist文件中的.exe文件后，在需要通信的设备上运行connectx_x.html后，在作为服务器的电脑上唤出终端后输入ipconfig查找到IPv4的地址，然后将IP地址输入这个网站再点击链接即可

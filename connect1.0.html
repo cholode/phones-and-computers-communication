@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>局域网极速传</title>
+    <style>
+        body { font-family: system-ui; max-width: 600px; margin: 0 auto; padding: 20px; background: #f4f4f9; }
+        .card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .config { display: flex; gap: 10px; margin-bottom: 20px; }
+        input[type="text"] { flex: 1; padding: 10px; border: 1px solid #ccc; border-radius: 5px; }
+        button { padding: 10px 15px; background: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        #chat-box { height: 400px; overflow-y: auto; border: 1px solid #eee; padding: 10px; margin-bottom: 20px; background: #fafafa; }
+        .message { margin-bottom: 15px; padding: 10px; background: #e3f2fd; border-radius: 8px; }
+        .file-msg { background: #e8f5e9; }
+        .file-link { color: #2e7d32; font-weight: bold; text-decoration: none; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>🔗 连接到服务器</h2>
+    <div class="config">
+        <input type="text" id="ip-input" placeholder="输入服务器IP (例如: 192.168.1.100)">
+        <button id="connect-btn" onclick="connectServer()">连接</button>
+    </div>
+
+    <div id="history-box" style="margin-bottom: 20px; font-size: 14px; display: none;">
+        <span style="color: #666;">最近连接: </span>
+        <span id="history-list"></span>
+    </div>
+
+
+    <div id="chat-box"></div>
+
+    <div class="config">
+        <input type="text" id="msg-input" placeholder="输入文字消息...">
+        <button onclick="sendText()">发送文字</button>
+    </div>
+
+    <div class="config">
+        <input type="file" id="file-input">
+        <button onclick="uploadFile()">发送大文件</button>
+    </div>
+</div>
+
+<script>
+    let ws = null;
+    let serverIP = "";
+
+    // 【新增】：页面加载时自动读取历史记录
+    window.onload = () => {
+        loadHistory();
+    };
+
+    // 【新增】：加载并渲染历史记录按钮
+    function loadHistory() {
+        // 从浏览器本地缓存读取，如果没有则默认为空数组
+        const history = JSON.parse(localStorage.getItem('lan_sync_ips') || '[]');
+        const historyBox = document.getElementById('history-box');
+        const historyList = document.getElementById('history-list');
+        
+        if (history.length > 0) {
+            historyBox.style.display = 'block';
+            historyList.innerHTML = ''; // 清空重新渲染
+            
+            history.forEach(ip => {
+                const btn = document.createElement('button');
+                btn.innerText = ip;
+                // 让按钮看起来像个小标签
+                btn.style.cssText = "margin: 0 5px; padding: 3px 8px; background: #e0e0e0; color: #333; border-radius: 12px; font-size: 12px;";
+                
+                // 点击历史 IP，自动填入并尝试连接
+                btn.onclick = () => {
+                    document.getElementById('ip-input').value = ip;
+                    connectServer();
+                };
+                historyList.appendChild(btn);
+            });
+        }
+    }
+
+    // 【新增】：保存成功连接的 IP
+    function saveHistory(ip) {
+        let history = JSON.parse(localStorage.getItem('lan_sync_ips') || '[]');
+        // 如果这个 IP 还没存过，就插到最前面
+        if (!history.includes(ip)) {
+            history.unshift(ip);
+            // 限制最多只存最近的 3 个历史 IP，控制界面整洁
+            if (history.length > 3) history.pop(); 
+            localStorage.setItem('lan_sync_ips', JSON.stringify(history));
+            loadHistory(); // 刷新界面
+        }
+    }
+
+    // 【修改】：原本的连接逻辑
+    function connectServer() {
+        if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+            return alert("⚠️ 已经连接上了，不要重复点击哦！");
+        }
+
+        serverIP = document.getElementById('ip-input').value.trim();
+        if (!serverIP) return alert("请输入服务器 IP！");
+
+        ws = new WebSocket(`ws://${serverIP}:8000/ws`);
+        
+        ws.onopen = () => {
+            alert("✅ 连接成功！");
+            
+            // 【核心】：只有真正连接成功了，才把这个 IP 存入历史记录
+            saveHistory(serverIP);
+            
+            const btn = document.getElementById('connect-btn');
+            btn.innerText = "已连接";
+            btn.disabled = true;
+            btn.style.background = "#ccc";
+        };
+
+        ws.onerror = () => {
+            alert("❌ 连接失败，请确保服务端已打开或检查 IP 是否正确以及防火墙设置。");
+            ws = null; // 连接失败时重置状态，允许重新点击
+        };
+        
+        ws.onmessage = (event) => {
+            const res = JSON.parse(event.data);
+            if (res.type === "history") {
+                document.getElementById('chat-box').innerHTML = ""; 
+                res.data.forEach(renderMessage);
+            } else if (res.type === "new_message") {
+                renderMessage(res.data);
+                const chatBox = document.getElementById('chat-box');
+                while (chatBox.children.length > 10) {
+                    chatBox.removeChild(chatBox.firstChild);
+                }
+            }
+        };
+    }
+
+    function renderMessage(msg) {
+        const chatBox = document.getElementById('chat-box');
+        const div = document.createElement('div');
+        div.className = `message ${msg.msg_type === 'file' ? 'file-msg' : ''}`;
+        
+        if (msg.msg_type === 'text') {
+            div.innerText = `💬: ${msg.content}`;
+        } else if (msg.msg_type === 'file') {
+            const url = `http://${serverIP}:8000${msg.download_url}`;
+            div.innerHTML = `📁: ${msg.filename} <br><a class="file-link" href="${url}" target="_blank">⬇️ 点击下载</a>`;
+        }
+        
+        chatBox.appendChild(div);
+        chatBox.scrollTop = chatBox.scrollHeight; // 自动滚动到底部
+    }
+
+    function sendText() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return alert("请先连接服务器！");
+        const input = document.getElementById('msg-input');
+        if (input.value) {
+            ws.send(input.value); // WebSocket 直接发文本
+            input.value = "";
+        }
+    }
+
+    async function uploadFile() {
+        if (!serverIP) return alert("请先连接服务器！");
+        const fileInput = document.getElementById('file-input');
+        if (!fileInput.files[0]) return alert("请先选择一个文件！");
+
+        const formData = new FormData();
+        formData.append("file", fileInput.files[0]);
+
+        const btn = event.target;
+        btn.innerText = "上传中...";
+        btn.disabled = true;
+
+        try {
+            // 通过 HTTP POST 流式上传文件
+            const response = await fetch(`http://${serverIP}:8000/upload`, {
+                method: "POST",
+                body: formData
+            });
+            if (response.ok) {
+                fileInput.value = ""; // 清空选择器
+            } else {
+                alert("上传失败！");
+            }
+        } catch (e) {
+            alert("网络错误：" + e);
+        } finally {
+            btn.innerText = "发送大文件";
+            btn.disabled = false;
+        }
+    }
+</script>
+
+</body>
+</html>
