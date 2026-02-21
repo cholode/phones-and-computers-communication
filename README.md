@@ -1,0 +1,2 @@
+# desktop_and_mobilephone_imformation
+用于多个手机和电脑在同一局域网下的通信
