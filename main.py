@@ -1,10 +1,28 @@
 import os
 import uuid
+import sys
+import socket
 import aiofiles
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Dict, Any
+
+
+# 获取程序当前真正所在的物理路径
+if getattr(sys, 'frozen', False):
+    # 如果是打包后的 EXE 运行，获取 EXE 所在的真实文件夹
+    BASE_DIR = os.path.dirname(sys.executable)
+else:
+    # 如果是直接跑 Python 脚本
+    BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# HTML 文件和上传文件夹，全部严格指向 EXE 同级目录
+HTML_PATH = os.path.join(BASE_DIR, "index.html")
+UPLOAD_DIR = os.path.join(BASE_DIR, "temp_uploads")
+
+# 启动时确保上传文件夹存在
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ================= 配置区 =================
 MAX_RECORD_COUNT = 10  # 严格限制最多 10 条记录
@@ -69,6 +87,12 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# 【新增】：响应局域网扫描的 Ping 接口
+@app.get("/ping")
+async def ping():
+    # 自动获取运行该服务器的计算机名称（例如："张三的拯救者" 或 "MacBook-Pro"）
+    hostname = socket.gethostname()
+    return {"status": "ok", "server_name": hostname}
 # ================= 路由接口 =================
 
 @app.websocket("/ws")
@@ -129,8 +153,62 @@ async def download_file(filename: str):
     # FileResponse 在底层会自动优化为适合系统的 sendfile 调用
     return FileResponse(path=filepath, filename=filename.split("_", 1)[-1])
 
+
+# ... (上面的 FastAPI 路由代码保持不变) ...
+
+def get_all_ips():
+    """获取本机所有非 127.0.0.1 的局域网 IP"""
+    ips = []
+
+    # 1. 尝试使用常规方法获取所有绑定的 IP
+    try:
+        hostname = socket.gethostname()
+        _, _, ip_list = socket.gethostbyname_ex(hostname)
+        for ip in ip_list:
+            if not ip.startswith("127.") and ip not in ips:
+                ips.append(ip)
+    except Exception:
+        pass
+
+    # 2. 结合 UDP 探测法作为补充（优先级更高）
+    s = None
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('10.255.255.255', 1))
+        udp_ip = s.getsockname()[0]
+        if not udp_ip.startswith("127.") and udp_ip not in ips:
+            # UDP 探测出来的往往优先级比较高，插到最前面
+            ips.insert(0, udp_ip)
+    except Exception:
+        pass
+    finally:
+        try:
+            if s:
+                s.close()
+        except:
+            pass
+
+    return ips
+
+
 if __name__ == "__main__":
     import uvicorn
-    # 监听 0.0.0.0 以允许局域网内的其他设备（手机、笔记本）访问
-    print("🚀 局域网通信主节点启动中...")
+
+    available_ips = get_all_ips()
+
+    # 打印启动面板
+    print("\n" + "=" * 60)
+    print("🚀 局域网极速传 - 服务器已成功启动！\n")
+    print("👉 手机/其他电脑请尝试使用以下地址连接（通常是 192.168 开头）：")
+
+    if not available_ips:
+        print(" - http://127.0.0.1:8000 (仅限本机访问)")
+    else:
+        for ip in available_ips:
+            print(f" - http://{ip}:8000")
+
+    print("\n⚠️ 提示：如果前端点击【雷达扫描】找不到，请检查 Windows 防火墙是否放行。")
+    print("=" * 60 + "\n")
+
+    # 启动 FastAPI 服务，允许局域网所有设备访问
     uvicorn.run(app, host="0.0.0.0", port=8000)
