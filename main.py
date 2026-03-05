@@ -1,12 +1,17 @@
+import asyncio
+import json
 import os
+import threading
 import uuid
 import sys
 import socket
+from collections import deque
+
 import aiofiles
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Deque
 
 
 # 获取程序当前真正所在的物理路径
@@ -18,7 +23,6 @@ else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # HTML 文件和上传文件夹，全部严格指向 EXE 同级目录
-HTML_PATH = os.path.join(BASE_DIR, "index.html")
 UPLOAD_DIR = os.path.join(BASE_DIR, "temp_uploads")
 
 # 启动时确保上传文件夹存在
@@ -31,6 +35,8 @@ UPLOAD_DIR = "./temp_uploads"  # 临时文件存储目录
 # 启动时确保上传目录存在
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+#历史记录保存路径
+HISTORY_FILENAME = "history_snapshot.json"
 app = FastAPI(title="LAN Sync Server")
 
 # 允许跨域（方便局域网内不同设备的浏览器直接访问）
@@ -42,12 +48,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+''' 加入心跳测试，僵尸回收 '''
+
 # ================= 状态管理 =================
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
         # 使用列表而不是 deque，方便我们在剔除旧元素时触发硬盘文件的物理删除
-        self.history: List[Dict[str, Any]] = []
+        self.history: Deque[Dict[str, Any]] = deque()
+        self._lock = asyncio.Lock()
+        self._load_history()
+
+    def _load_history(self):
+        """启动时重载状态"""
+        if os.path.exists(HISTORY_FILENAME):
+            try:
+                with open(HISTORY_FILENAME, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    for msg in data:
+                        self.history.append(msg)
+                print(f"已加载成功！")
+            except Exception as e:
+                print(f"文件{HISTORY_FILENAME}已损坏,{e}")
+
+    async def _save_history_snapshot(self):
+        """通过异步锁存入文件"""
+        async with self._lock:
+            try:
+                async with aiofiles.open(HISTORY_FILENAME, "w", encoding="utf-8") as f:
+                    snapshot_data = json.dumps(list(self.history), ensure_ascii=False)
+                    await f.write(snapshot_data)
+            except Exception as e:
+                print(f"落盘失败，{e}")
+
+
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -68,22 +102,29 @@ class ConnectionManager:
 
     async def add_message(self, message: dict):
         """核心逻辑：滑动窗口与硬盘垃圾回收"""
-        if len(self.history) >= MAX_RECORD_COUNT:
-            # 弹出最老的一条记录
-            oldest_msg = self.history.pop(0)
-            
-            # 如果最老的记录是文件类型，执行物理删除，绝不挤占昂贵的固态硬盘
-            if oldest_msg.get("msg_type") == "file":
-                filepath = oldest_msg.get("filepath")
-                if filepath and os.path.exists(filepath):
-                    try:
-                        os.remove(filepath)
-                        print(f"[存储释放] 已物理删除过期文件: {filepath}")
-                    except Exception as e:
-                        print(f"[清理失败] {e}")
 
         self.history.append(message)
         await self.broadcast(message)
+
+        if len(self.history) >= MAX_RECORD_COUNT:
+            # 弹出最老的一条记录
+            try:
+                oldest_msg = self.history.popleft()
+                if oldest_msg.get("msg_type") == "file":
+                    filepath = oldest_msg.get("filepath")
+                    if filepath and os.path.exists(filepath):
+                        try:
+                            os.remove(filepath)
+                            print(f"[存储释放] 已物理删除过期文件: {filepath}")
+                        except Exception as e:
+                            print(f"[清理失败] {e}")
+            except IndexError:
+                pass
+            # 如果最老的记录是文件类型，执行物理删除，绝不挤占昂贵的固态硬盘
+
+        asyncio.create_task(self._save_history_snapshot())
+
+
 
 manager = ConnectionManager()
 
@@ -112,6 +153,8 @@ async def websocket_endpoint(websocket: WebSocket):
             await manager.add_message(msg)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+        pass #怎加断线重连机制
 
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
