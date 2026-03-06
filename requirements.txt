@@ -1,0 +1,11 @@
+# Web 框架核心
+fastapi
+uvicorn[standard]
+aiofiles
+
+# MySQL 异步数据库依赖
+databases
+aiomysql
+
+# 加密相关
+cryptography

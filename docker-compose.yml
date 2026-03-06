@@ -1,0 +1,25 @@
+version: '3.8'
+services:
+  # 1. 数据库微服务（被死死封锁在内网沙箱中）
+  db:
+    image: mysql:8.0
+    container_name: lansync_mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password_123  # 真实的生成环境要读 .env 文件
+      MYSQL_DATABASE: lansync_db
+    # 绝对不要写 ports: ["3306:3306"]！
+    # 不暴露端口，物理隔绝外部的 SQL 注入攻击，只允许同网络的 Web 容器访问！
+
+  # 2. 你的 FastAPI 网关微服务
+  web:
+    build: .  # 告诉 Docker 用当前目录的 Dockerfile 打包你的 Python 代码
+    container_name: lansync_web
+    restart: always
+    ports:
+      - "8080:8000"  # 只有这个端口映射到宿主机，供前端访问
+    depends_on:
+      - db  # 严格的启动顺序：必须等 MySQL 启动后，再启动 FastAPI
+    environment:
+      # 极其致命的细节：告诉 Python，数据库的地址是 "db"，而不是 localhost！
+      - DATABASE_URL=mysql+aiomysql://root:root_password_123@db:3306/lansync_db
