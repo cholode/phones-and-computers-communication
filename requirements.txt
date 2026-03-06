@@ -1,11 +1,30 @@
 # Web 框架核心
-fastapi
-uvicorn[standard]
-aiofiles
+fastapi~=0.135.1
+uvicorn[standard]~=0.41.0
+aiofiles~=25.1.0
 
 # MySQL 异步数据库依赖
-databases
+databases~=0.9.0
 aiomysql
 
 # 加密相关
-cryptography
+cryptography~=46.0.5
+SQLAlchemy~=2.0.48
+h11~=0.16.0
+pip~=24.0
+wheel~=0.45.1
+typing_extensions~=4.15.0
+pydantic~=2.12.5
+pydantic_core~=2.41.5
+starlette~=0.52.1
+websockets~=16.0
+anyio~=4.12.1
+uvloop~=0.22.1
+click~=8.3.1
+httptools~=0.7.1
+watchfiles~=1.1.1
+annotated-types~=0.7.0
+PyYAML~=6.0.3
+setuptools~=79.0.1
+cffi~=2.0.0
+python-multipart

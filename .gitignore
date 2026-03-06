@@ -1,3 +1,5 @@
 venv/
 
 temp_uploads/
+
+mysql_data/

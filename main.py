@@ -33,10 +33,9 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # ================= 配置区 =================
 MAX_RECORD_COUNT = 10  # 严格限制最多 10 条记录
-UPLOAD_DIR = "./temp_uploads"  # 临时文件存储目录
 
 # 启动时确保上传目录存在
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+
 
 ''' 加入心跳测试，僵尸回收 '''
 
@@ -44,39 +43,6 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
 
-def get_all_ips():
-    """获取本机所有非 127.0.0.1 的局域网 IP"""
-    ips = []
-
-    # 1. 尝试使用常规方法获取所有绑定的 IP
-    try:
-        hostname = socket.gethostname()
-        _, _, ip_list = socket.gethostbyname_ex(hostname)
-        for ip in ip_list:
-            if not ip.startswith("127.") and ip not in ips:
-                ips.append(ip)
-    except Exception:
-        pass
-
-    # 2. 结合 UDP 探测法作为补充（优先级更高）
-    s = None
-    try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(('10.255.255.255', 1))
-        udp_ip = s.getsockname()[0]
-        if not udp_ip.startswith("127.") and udp_ip not in ips:
-            # UDP 探测出来的往往优先级比较高，插到最前面
-            ips.insert(0, udp_ip)
-    except Exception:
-        pass
-    finally:
-        try:
-            if s:
-                s.close()
-        except:
-            pass
-
-    return ips
 
 # 假设 database 是你之前定义的异步数据库连接池对象
 # database = Database(DATABASE_URL, min_size=5, max_size=20)
@@ -116,7 +82,10 @@ class ConnectionManager:
         await websocket.accept()
         self.active_connections.append(websocket)
         # 新设备接入时，立刻把当前的至多 10 条历史记录全量推送过去
-        await websocket.send_json({"type": "history", "data": self.history})
+        try:
+            await websocket.send_json({"type": "connect", "data": list(self.history)})
+        except Exception as e:
+            print(f"发送历史记录失败: {e}")
 
     def disconnect(self, websocket: WebSocket):
         self.active_connections.remove(websocket)
@@ -167,18 +136,15 @@ async def lifespan(app: FastAPI):
     print("✅ MySQL 连接池就绪，网关全功率开启！")
     await manager.load_history_from_db()
 
-    available_ips = get_all_ips()
+
 
     # 打印启动面板
     print("\n" + "=" * 60)
     print("🚀 局域网极速传 - 服务器已成功启动！\n")
-    print("👉 手机/其他电脑请尝试使用以下地址连接（通常是 192.168 开头）：")
-
-    if not available_ips:
-        print(" - http://127.0.0.1:8000 (仅限本机访问)")
-    else:
-        for ip in available_ips:
-            print(f" - http://{ip}:8000")
+    print("🚀 局域网极速传 (Docker 完全体) - 服务器已成功启动！\n")
+    print("👉 后端已绑定虚拟网卡 0.0.0.0:8000，等待宿主机 NAT 流量穿透...")
+    print("⚠️ 请在物理机终端使用 `ipconfig` 查看真实局域网 IP。")
+    print("=" * 60 + "\n")
 
     print("\n⚠️ 提示：如果前端点击【雷达扫描】找不到，请检查 Windows 防火墙是否放行。")
     print("=" * 60 + "\n")
@@ -322,11 +288,6 @@ async def download_file(filename: str):
 
 
 # ... (上面的 FastAPI 路由代码保持不变) ...
-
-
-
-
-
 
 
 if __name__ == "__main__":
