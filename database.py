@@ -1,7 +1,32 @@
 import os
 import sqlalchemy
 from databases import Database
+import time
+from sqlalchemy import create_engine, MetaData
+from sqlalchemy.exc import OperationalError
 
+
+# 数据库连接配置
+SYNC_DATABASE_URL = "mysql+pymysql://root:root_password_123@db:3306/lansync_db"
+engine = create_engine(SYNC_DATABASE_URL)
+
+metadata = MetaData()
+
+# 为数据库启动留出重试缓冲期
+MAX_RETRIES = 5
+for attempt in range(MAX_RETRIES):
+    try:
+        print(f"🔄 正在尝试连接 MySQL 并初始化表结构 (尝试 {attempt + 1}/{MAX_RETRIES})...")
+        metadata.create_all(engine)
+        print("✅ MySQL 表结构初始化成功！")
+        break  # 如果没报错，直接跳出循环！
+    except OperationalError as e:
+        if attempt < MAX_RETRIES - 1:
+            print(f"⚠️ MySQL 引擎尚未就绪，3秒后重试... ({e})")
+            time.sleep(3)  # 睡 3 秒再试
+        else:
+            print("❌ 极度灾难：MySQL 彻底失联，FastAPI 将退出启动！")
+            raise e  # 超过最大重试次数，只能绝望报错
 # 1. 极其动态的环境变量寻址
 # 这里的 "db" 就是你在 docker-compose.yml 里给 MySQL 容器起的名字！
 # 如果环境变量没配，就默认连本地（防崩溃兜底）
